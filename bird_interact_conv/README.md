@@ -81,8 +81,22 @@ bird_interact_conv/
 mkdir data
 cd data
 git clone https://huggingface.co/datasets/birdsql/bird-interact-lite
-# Combine with GT fields (contact us for access) into bird_interact_data.jsonl
 ```
+
+After cloning the data repository, follow these steps to prepare the dataset:
+
+1. Copy the JSON file containing the GT fields into the `bird-interact-lite` directory
+2. Run the merge script to combine the datasets:
+   ```bash
+   cd .. # Go back to the root directory
+   python merge_datasets.py
+   ```
+3. Verify the merge was successful:
+   ```bash
+   python verify_merge.py
+   ```
+
+This process will create a unified JSONL file with GT fields that combines the original dataset with the ground truth information. Once verification is complete, you can proceed with the rest of the instructions.
 
 ### 2. Environment Setup
 
@@ -97,11 +111,11 @@ git clone https://huggingface.co/datasets/birdsql/bird-interact-lite
    ```
    This launches two containers:
    - PostgreSQL database
-   - Evaluation environment (interact_eval_env)
+   - Evaluation environment (so_eval_env)
 
 3. To run the baseline code you need to install the following dependencies:
   ```bash
-  docker compose exec interact_eval_env bash
+  docker compose exec so_eval_env bash
   cd bird_interact_conv
   pip install -r requirements.txt
   ```
@@ -148,6 +162,39 @@ The `prompts.py` file contains templates and prompts used for:
 
 ### Results
 Results from conversation runs are stored in the `results/` directory.
+
+## FAQ
+
+### Q: Which model variable is used for user simulation?
+
+**A:** The `US_model_name` variable is used for user simulation. In the `run_gpt.sh` script, you can see that `call_api.py` is called with `--model_name ${US_model_name}` for both "User Simulator Step 1" and "User Simulator Step 2". The `system_model_name` is used for the system agent that generates clarifying questions and SQL queries.
+
+### Q: What are the output files in the results directory?
+
+**A:** The results directory contains several types of files generated during the conversation and evaluation process:
+
+#### System and User Interaction Files
+
+* **`system_interaction_prompt.jsonl`**: Complete prompts sent to the system model at each turn
+* **`system_interaction_response.jsonl`**: Raw JSON responses from the system model API
+* **`system_interaction.jsonl`**: Main log file for the system's conversation history and SQL generation
+* **`user_1_interaction_prompt.jsonl`**: Prompts for user simulator's encoder step (deciding how to answer)
+* **`user_1_interaction_response.jsonl`**: Raw API responses from user simulator's encoder
+* **`user_1_interaction.jsonl`**: Log file containing the "action" decided by user simulator's encoder
+* **`user_2_interaction_prompt.jsonl`**: Prompts for user simulator's decoder step (generating natural language)
+* **`user_2_interaction_response.jsonl`**: Raw API responses from user simulator's decoder
+* **`user_2_interaction.jsonl`**: Log file containing final natural language responses from user simulator
+
+#### SQL and Evaluation Files
+
+* **`sql_results.jsonl`**: First SQL query extracted after initial ambiguity resolution
+* **`sql_results_output_with_status.jsonl`**: Evaluation results with success/failure status and error messages
+* **`sql_results_debug.jsonl`**: Corrected SQL query from debugging phase (if first attempt failed)
+* **`sql_results_debug_output_with_status.jsonl`**: Evaluation results for debugged SQL query
+* **`sql_results_fu.jsonl`**: SQL query generated for follow-up question phase
+* **`sql_results_fu_output_with_status.jsonl`**: Evaluation results for follow-up SQL query
+* **`sql_results_fu_debug.jsonl`**: Corrected SQL query for follow-up question debugging
+* **`sql_results_fu_debug_output_with_status.jsonl`**: Final evaluation results for debugged follow-up SQL
 
 
 

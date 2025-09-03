@@ -34,7 +34,7 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys, data
     if 'prediction_turn_'+str(turn_i) in data and "Error:" in data['prediction_turn_'+str(turn_i)]:
         error_flg = True
         data["error_flg"] = error_flg
-    elif data_sys["error_flg"] == True or data_user_1["error_flg"] == True:
+    elif data_sys.get("error_flg", False) == True or data_user_1.get("error_flg", False) == True:
         error_flg = True
         data["error_flg"] = error_flg
     else:
@@ -45,13 +45,13 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys, data
     if "Terminate_flg" in data_sys and data_sys["Terminate_flg"] == True:
         terminate_flag = True
         data["Terminate_flg"] = True
-        data["final_turn"] = data_sys["final_turn"]
+        data["final_turn"] = data_sys.get("final_turn", False)
         return data
     elif return_flg:
         return data
     else:
         terminate_flag = False
-        data["final_turn"] = data_sys["final_turn"]
+        data["final_turn"] = data_sys.get("final_turn", False)
     
     # Start
     db_name = data.get('selected_database', '')    
@@ -59,8 +59,12 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys, data
         DB_schema = file.read()
 
     ### prompt filling
-    prompt = prompt_template.replace('[[clarification_Q]]', extract_response(data_sys['prediction_turn_'+str(turn_i)]))
-    prompt = prompt.replace('[[Action]]', extract_response(data_user_1['prediction_turn_'+str(turn_i)]))
+    prediction_key = 'prediction_turn_'+str(turn_i)
+    clarification_q = data_sys.get(prediction_key, '')
+    action = data_user_1.get(prediction_key, '')
+    
+    prompt = prompt_template.replace('[[clarification_Q]]', extract_response(clarification_q) if clarification_q else '')
+    prompt = prompt.replace('[[Action]]', extract_response(action) if action else '')
     prompt = prompt.replace('[[amb_json]]', "user_query_ambiguity: \n" + json.dumps(data["user_query_ambiguity"], indent=4) + '\n\nknowledge_ambiguity: \n' + json.dumps(data["knowledge_ambiguity"], indent=4))
     
     sql_segs = ""

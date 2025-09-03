@@ -20,7 +20,7 @@ httplib2==0.22.0
 httpx==0.28.1
 idna==3.10
 jiter==0.8.2
-openai==1.55.3
+openai==1.104.2
 proto-plus==1.25.0
 protobuf==4.25.5
 pyasn1==0.6.1
@@ -38,3 +38,4 @@ uritemplate==4.1.1
 datasets==3.2.0
 sqlglot==26.16.4
 sqlglotrs==0.4.0
+google_genai==1.32.0

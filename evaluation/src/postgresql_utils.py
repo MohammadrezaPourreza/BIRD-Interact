@@ -120,6 +120,100 @@ def close_all_postgresql_pools():
     _postgresql_pools.clear()
 
 
+def close_all_postgresql_pools():
+    """
+    Close all connection pools and clear the pools dictionary.
+    """
+    for db_name in list(_postgresql_pools.keys()):
+        close_postgresql_pool(db_name)
+    _postgresql_pools.clear()
+
+
+def diagnose_database_connectivity(pg_password, logger=None):
+    """
+    Diagnose database connectivity and list available databases and templates.
+    """
+    if logger is None:
+        logger = PrintLogger()
+        
+    pg_host = "bird_interact_postgresql"
+    pg_port = 5432
+    pg_user = "root"
+    
+    env_vars = os.environ.copy()
+    env_vars["PGPASSWORD"] = pg_password
+    
+    logger.info("=== Database Connectivity Diagnosis ===")
+    
+    try:
+        # Test basic connectivity
+        test_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-c",
+            "SELECT version();",
+        ]
+        result = subprocess.run(
+            test_command,
+            check=True,
+            env=env_vars,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        logger.info("✓ Database connectivity successful")
+        
+        # List all databases
+        list_all_dbs_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-t",
+            "-c",
+            "SELECT datname, datistemplate FROM pg_database ORDER BY datname;",
+        ]
+        db_result = subprocess.run(
+            list_all_dbs_command,
+            check=True,
+            env=env_vars,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        
+        logger.info("Available databases:")
+        for line in db_result.stdout.split('\n'):
+            if line.strip():
+                parts = line.strip().split('|')
+                if len(parts) >= 2:
+                    db_name = parts[0].strip()
+                    is_template = parts[1].strip()
+                    logger.info(f"  - {db_name} (template: {is_template})")
+        
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"✗ Database connectivity failed: {e}")
+        logger.error(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else 'N/A'}")
+        return False
+    except Exception as e:
+        logger.error(f"✗ Unexpected error during connectivity test: {e}")
+        return False
+
+
 def close_postgresql_pool(db_name):
     """
     Close the pool for a specific db_name and remove its reference.
@@ -161,86 +255,207 @@ def reset_and_restore_database(db_name, pg_password, logger=None):
     base_db_name = db_name.split("_process_")[0]
     template_db_name = f"{base_db_name}_template"
 
-    logger.info(f"Resetting database {db_name} using template {template_db_name}")
+    print(f"Resetting database {db_name} using template {template_db_name}")
+    logger.info(f"Starting database reset: {db_name} -> {template_db_name}")
+    
+    # First, let's check database connectivity and list available databases for debugging
+    try:
+        list_dbs_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-t",
+            "-c",
+            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;",
+        ]
+        db_list_result = subprocess.run(
+            list_dbs_command,
+            check=False,
+            env=env_vars,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        if db_list_result.returncode == 0:
+            available_dbs = [db.strip() for db in db_list_result.stdout.split('\n') if db.strip()]
+            logger.info(f"Available databases: {available_dbs}")
+        else:
+            logger.warning(f"Could not list databases: {db_list_result.stderr}")
+            
+        # Also check template databases
+        list_templates_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-t",
+            "-c",
+            "SELECT datname FROM pg_database WHERE datistemplate = true AND datname LIKE '%_template' ORDER BY datname;",
+        ]
+        template_list_result = subprocess.run(
+            list_templates_command,
+            check=False,
+            env=env_vars,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        if template_list_result.returncode == 0:
+            available_templates = [db.strip() for db in template_list_result.stdout.split('\n') if db.strip()]
+            logger.info(f"Available template databases: {available_templates}")
+            if template_db_name not in available_templates:
+                logger.warning(f"Template database {template_db_name} not found in available templates!")
+        else:
+            logger.warning(f"Could not list template databases: {template_list_result.stderr}")
+    except Exception as e:
+        logger.warning(f"Failed to check database connectivity: {e}")
 
     # 1) Close the pool
-    logger.info(f"Closing connection pool for database {db_name} before resetting.")
+    print(f"Closing connection pool for database {db_name} before resetting.")
     close_postgresql_pool(db_name)
 
-    # 2) Terminate existing connections
-    terminate_command = [
-        "psql",
-        "-h",
-        pg_host,
-        "-p",
-        str(pg_port),
-        "-U",
-        pg_user,
-        "-d",
-        "postgres",
-        "-c",
-        f"""
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE datname = '{db_name}' AND pid <> pg_backend_pid();
-        """,
-    ]
-    subprocess.run(
-        terminate_command,
-        check=True,
-        env=env_vars,
-        timeout=60,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    logger.info(f"All connections to database {db_name} have been terminated.")
+    print(f"Connection pool for database {db_name} closed.")
+    # 2) Terminate existing connections (best effort, don't fail if this doesn't work)
+    try:
+        terminate_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-c",
+            f"""
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = '{db_name}' AND pid <> pg_backend_pid();
+            """,
+        ]
+        result = subprocess.run(
+            terminate_command,
+            check=True,
+            env=env_vars,
+            timeout=60,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(f"All connections to database {db_name} have been terminated.")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Failed to terminate connections to database {db_name}: {e}")
+        logger.warning(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else 'N/A'}")
+        logger.info("Continuing with reset... (this is usually not critical)")
+    except Exception as e:
+        logger.warning(f"Unexpected error while terminating connections to database {db_name}: {e}. Continuing with reset...")
 
-    # 3) dropdb
-    drop_command = [
-        "dropdb",
-        "--if-exists",
-        "-h",
-        pg_host,
-        "-p",
-        str(pg_port),
-        "-U",
-        pg_user,
-        db_name,
-    ]
-    subprocess.run(
-        drop_command,
-        check=True,
-        env=env_vars,
-        timeout=60,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    logger.info(f"Database {db_name} dropped if it existed.")
+    # 3) dropdb (best effort, continue even if it fails)
+    try:
+        drop_command = [
+            "dropdb",
+            "--if-exists",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            db_name,
+        ]
+        result = subprocess.run(
+            drop_command,
+            check=True,
+            env=env_vars,
+            timeout=60,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(f"Database {db_name} dropped if it existed.")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Failed to drop database {db_name}: {e}")
+        logger.warning(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else 'N/A'}")
+        logger.info("Continuing with recreation... (database might not have existed)")
+    except Exception as e:
+        logger.warning(f"Unexpected error while dropping database {db_name}: {e}. Continuing with recreation...")
 
     # 4) createdb --template=xxx_template
-    create_command = [
-        "createdb",
-        "-h",
-        pg_host,
-        "-p",
-        str(pg_port),
-        "-U",
-        pg_user,
-        db_name,
-        "--template",
-        template_db_name,
-    ]
-    subprocess.run(
-        create_command,
-        check=True,
-        env=env_vars,
-        timeout=60,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    logger.info(
-        f"Database {db_name} created from template {template_db_name} successfully."
-    )
+    try:
+        # First, let's verify the template database exists
+        check_template_command = [
+            "psql",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            "-d",
+            "postgres",
+            "-t",
+            "-c",
+            f"SELECT 1 FROM pg_database WHERE datname = '{template_db_name}';",
+        ]
+        template_check = subprocess.run(
+            check_template_command,
+            check=False,
+            env=env_vars,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        
+        if template_check.returncode != 0 or not template_check.stdout.strip():
+            error_msg = f"Template database {template_db_name} does not exist or is not accessible"
+            logger.error(error_msg)
+            logger.error(f"Template check stderr: {template_check.stderr}")
+            raise Exception(error_msg)
+        
+        logger.info(f"Template database {template_db_name} verified as existing")
+        
+        create_command = [
+            "createdb",
+            "-h",
+            pg_host,
+            "-p",
+            str(pg_port),
+            "-U",
+            pg_user,
+            db_name,
+            "--template",
+            template_db_name,
+        ]
+        result = subprocess.run(
+            create_command,
+            check=True,
+            env=env_vars,
+            timeout=60,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(
+            f"Database {db_name} created from template {template_db_name} successfully."
+        )
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Failed to create database {db_name} from template {template_db_name}: {e}"
+        logger.error(error_msg)
+        logger.error(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else 'N/A'}")
+        raise Exception(error_msg)
+    except Exception as e:
+        error_msg = f"Unexpected error while creating database {db_name} from template {template_db_name}: {e}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 
 def create_ephemeral_db_copies(

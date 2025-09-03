@@ -13,6 +13,9 @@ def process_batch_data(data, batch_size):
     return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
 
 def extract_response(original_response):
+    if original_response is None:
+        return "Error: No response available"
+    
     cut_idx = original_response.find("</s>")
     if cut_idx != -1:
         extracted_response = original_response[:cut_idx].strip()
@@ -34,7 +37,7 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys):
     if 'prediction_turn_'+str(turn_i) in data and "Error:" in data['prediction_turn_'+str(turn_i)]:
         error_flg = True
         data["error_flg"] = error_flg
-    elif data_sys["error_flg"] == True:
+    elif data_sys.get("error_flg", False) == True:
         error_flg = True
         data["error_flg"] = error_flg
     else:
@@ -45,12 +48,12 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys):
     if "Terminate_flg" in data_sys and data_sys["Terminate_flg"] == True:
         terminate_flag = True
         data["Terminate_flg"] = True
-        data["final_turn"] = data_sys["final_turn"]
+        data["final_turn"] = data_sys.get("final_turn", 1)
         return data
     elif return_flg:
         return data
     else:
-        data["final_turn"] = data_sys["final_turn"]
+        data["final_turn"] = data_sys.get("final_turn", 1)
         terminate_flag = False
     
     # Start
@@ -59,7 +62,11 @@ def wrap_up_prompt(data, DB_schema_path, prompt_template, turn_i, data_sys):
         DB_schema = file.read()
 
     ### prompt filling
-    prompt = prompt_template.replace('[[clarification_Q]]', extract_response(data_sys['prediction_turn_'+str(turn_i)]))
+    system_response = data_sys.get('prediction_turn_'+str(turn_i), '')
+    if system_response:
+        prompt = prompt_template.replace('[[clarification_Q]]', extract_response(system_response))
+    else:
+        prompt = prompt_template.replace('[[clarification_Q]]', 'Error: No system response available')
     prompt = prompt.replace('[[amb_json]]', "user_query_ambiguity: \n" + json.dumps(data["user_query_ambiguity"], indent=4) + '\n\nknowledge_ambiguity: \n' + json.dumps(data["knowledge_ambiguity"], indent=4))
     
     sql_segs = ""

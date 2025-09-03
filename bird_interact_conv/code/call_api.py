@@ -10,9 +10,34 @@ import threading
 
 from openai import OpenAI
 import anthropic
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold, GenerationConfig
+from google import genai
+# from google.generativeai.types import HarmCategory, HarmBlockThreshold, GenerationConfig
+from google.genai import types
 from config import model_config
+from anthropic import AnthropicVertex
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+
+
+def is_rate_limit_error(exception):
+    """Check if the exception is related to rate limiting."""
+    error_str = str(exception).lower()
+    return any(keyword in error_str for keyword in [
+        'rate limit', 'rate_limit', 'too many requests', '429', 
+        'quota', 'throttle', 'resource_exhausted'
+    ])
+
+
+def is_retryable_error(exception):
+    """Check if the exception is retryable."""
+    error_str = str(exception).lower()
+    retryable_keywords = [
+        'rate limit', 'rate_limit', 'too many requests', '429',
+        'quota', 'throttle', 'resource_exhausted', 'timeout',
+        'connection', 'network', 'service unavailable', '503',
+        'internal server error', '500', 'bad gateway', '502'
+    ]
+    return any(keyword in error_str for keyword in retryable_keywords)
 
 
 def load_jsonl(file_path):
@@ -28,9 +53,10 @@ def new_directory(path):
         os.makedirs(path)
 
 
-GEMINI_API_KEYS = model_config["gemini"]
-# Create an infinite key cycle
-gemini_key_cycle = itertools.cycle(GEMINI_API_KEYS)
+GEMINI_API_KEYS = model_config.get("gemini")
+if GEMINI_API_KEYS is not None:
+    # Create an infinite key cycle
+    gemini_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 
 
 def write_response(results, data_list, output_path):
@@ -55,66 +81,81 @@ def api_request(messages, engine, client, backend, **kwargs):
     """
     Calls the underlying LLM endpoint depending on the 'backend'.
     """
-    while True:
-        try:
-            if backend == "openai":
-                completion = client.chat.completions.create(
-                    model=engine,
-                    messages=messages,
+    # @retry(
+    #     stop=stop_after_attempt(5),
+    #     wait=wait_exponential(multiplier=2, min=4, max=120),
+    #     retry=is_retryable_error,
+    #     reraise=True
+    # )
+    def _make_api_call():
+        if backend == "openai":
+            completion = client.chat.completions.create(
+                model=engine,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0),
+                max_tokens=kwargs.get("max_tokens", 512),
+                top_p=kwargs.get("top_p", 1),
+                frequency_penalty=kwargs.get("frequency_penalty", 0),
+                presence_penalty=kwargs.get("presence_penalty", 0),
+                stop=kwargs.get("stop", None),
+            )
+            return completion.choices[0].message.content
+
+        elif backend == "anthropic":
+            message = client.messages.create(
+                model=engine,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0),
+                max_tokens=kwargs.get("max_tokens", 512),
+                top_p=kwargs.get("top_p", 1),
+                stop_sequences=kwargs.get("stop", None),
+            )
+            return message.content[0].text
+
+        elif backend == "genai":
+            response = client.models.generate_content(
+                model=engine,
+                contents=messages[0]["content"],
+                config=types.GenerateContentConfig(
                     temperature=kwargs.get("temperature", 0),
-                    max_tokens=kwargs.get("max_tokens", 512),
                     top_p=kwargs.get("top_p", 1),
-                    frequency_penalty=kwargs.get("frequency_penalty", 0),
+                    # max_output_tokens=60000,
+                    # thinking_config=types.ThinkingConfig(
+                    #     thinking_budget=128
+                    # ),
                     presence_penalty=kwargs.get("presence_penalty", 0),
-                    stop=kwargs.get("stop", None),
-                )
-                return completion.choices[0].message.content
-
-            elif backend == "anthropic":
-                message = client.messages.create(
-                    model=engine,
-                    messages=messages,
-                    temperature=kwargs.get("temperature", 0),
-                    max_tokens=kwargs.get("max_tokens", 512),
-                    top_p=kwargs.get("top_p", 1),
+                    frequency_penalty=kwargs.get("frequency_penalty", 0),
                     stop_sequences=kwargs.get("stop", None),
-                )
-                return message.content[0].text
+                ),
+            )
+            if not response or not response.text:
+                print("Received empty response from Gemini API.")
+                print(response)
+                raise ValueError("Empty response from Gemini API")
+            return response.text
 
-            elif backend == "genai":
-                response = client.generate_content(
-                    messages[0]["content"],
-                    generation_config=GenerationConfig(
-                        temperature=kwargs.get("temperature", 0),
-                        top_p=kwargs.get("top_p", 1),
-                        max_output_tokens=kwargs.get("max_tokens", 512),
-                        presence_penalty=kwargs.get("presence_penalty", 0),
-                        frequency_penalty=kwargs.get("frequency_penalty", 0),
-                        stop_sequences=kwargs.get("stop", None),
-                    ),
-                )
-                try:
-                    return response.text
-                except ValueError as ve:
-                    return f"Model refused to generate a response {ve}"
-                except Exception:
-                    return ""
+    wait_exponential = 2
+    base_wait_time = 10
+    try:
+        return _make_api_call()
+    except Exception as e:
+        # try to run it 3 more time with sleep 100 seconds
+        for i in range(5):
+            time.sleep(base_wait_time * wait_exponential ** i)
+            try:
+                return _make_api_call()
+            except Exception as retry_e:
+                print(f"Retry failed: {retry_e}")
+        print(f"API request failed after all retries: {e}")
 
-        except Exception as e:
-            print(e)
-            time.sleep(1)
-            # Rotate API keys and retry if using the genai backend
-            if backend == "genai":
-                genai.configure(api_key=next(gemini_key_cycle))
-                time.sleep(10)
 
 
 def call_api_model(
     messages,
     model_name,
     temperature=0,
-    max_tokens=512,
-    top_p=1,
+    max_tokens=2048,
+    top_p=0.9,
     frequency_penalty=0,
     presence_penalty=0,
     timeout=10,
@@ -133,15 +174,23 @@ def call_api_model(
 
     elif "claude" in model_name:
         engine = model_name
-        client = anthropic.Anthropic(
-            api_key=model_config[model_name],
-        )
+        # client = anthropic.Anthropic(
+        #     api_key=model_config[model_name],
+        # )
+        try:
+            client = AnthropicVertex(
+                project_id=model_config[model_name]["project"],
+                region=model_config[model_name]["location"],
+            )
+        except Exception as e:
+            print(f"Error occurred while calling Anthropic model: {e}")
         backend = "anthropic"
 
     elif "gemini" in model_name:
         engine = model_name
-        client = genai.GenerativeModel(engine)
-        genai.configure(api_key=GEMINI_API_KEYS[1])
+        # client = genai.GenerativeModel(engine)
+        # genai.configure(api_key=GEMINI_API_KEYS[1])
+        client = genai.Client(vertexai=True, project=model_config[model_name]["project"], location=model_config[model_name]["location"])
         backend = "genai"
 
     else:
@@ -156,7 +205,13 @@ def call_api_model(
         "presence_penalty": presence_penalty,
         "stop": stop,
     }
-    return api_request(messages, engine, client, backend, **kwargs)
+    result = api_request(messages, engine, client, backend, **kwargs)
+    
+    # Ensure we never return None
+    if result is None:
+        return "Error: API request failed after multiple retries"
+    
+    return result
 
 
 def worker_function(task, data_list, output_path, lock):
