@@ -114,12 +114,14 @@ def wrap_up_prompt(data, DB_schema_path, external_kg_path, prompt_template, pati
                 sys_response, terminate_flag = extract_system_response(response_prev)
                 if terminate_flag == True:
                     data["Terminate_flg"] = True
+                    return data
                 user_response = extract_user_response(response_user_prev)
                 prompt = prompt + sys_response + "\n- User: " + user_response + '\n\n### Turn [[turn_i]] ([[turn_left]] turns left): \n# Format: "<s>[YOUR-ONLY-ONE-QUESTION]]</s>" if you choose to ask for clarification; or "<t>```postgresql [YOUR-SQL] ```</t>" if you choose to generate final SQL.\n- You: '.replace('[[turn_i]]', str(turn_i)).replace('[[turn_left]]', str(max_turn-turn_i+1))
             else:
                 sys_response, terminate_flag = extract_system_response(response_prev)
                 if terminate_flag == True:
                     data["Terminate_flg"] = True
+                    return data
                 user_response = extract_user_response(response_user_prev)
                 prompt = prompt + sys_response + "\n- User: " + user_response + '\n\n### Turn [[turn_i]] (1 turn left): \n# It is the final turn. You MUST provide the final PostgreSQL and follow the format: "<t>```postgresql [YOUR-SQL] ```</t>"\n- You: <t>'.replace('[[turn_i]]', str(turn_i))
         

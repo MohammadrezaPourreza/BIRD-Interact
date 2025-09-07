@@ -242,7 +242,7 @@ def print_detailed_results(results: List[Dict]):
 def main():
     parser = argparse.ArgumentParser(description='Calculate BIRD-Interact final performance scores')
     parser.add_argument('--results_dir', 
-                       default='/usr/local/google/home/pourreza/Research/BIRD-Interact/bird_interact_conv/results/patience_3',
+                       default='/usr/local/google/home/pourreza/AlloyDB/BIRD-Interact/bird_interact_conv/results/patience_3',
                        help='Path to the results directory containing model subdirectories')
     
     args = parser.parse_args()

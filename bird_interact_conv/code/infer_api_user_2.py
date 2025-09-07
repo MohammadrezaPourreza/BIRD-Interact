@@ -97,10 +97,21 @@ def load_from_jsonl_dataset(prompt_path, sys_resp_path, user_1_resp_path, result
         dataset_user_1 = [json.loads(line) for line in f]    
     with open(prompt_path, 'r') as f:
         dataset = [json.loads(line) for line in f]
-        dataset = [wrap_up_prompt(dataset[j], DB_schema_path, prompt_template, turn_i, dataset_sys[j], dataset_user_1[j]) for j in range(len(dataset))]
+        
+        # Filter out terminated samples before processing
+        non_terminated_indices = []
+        for j in range(len(dataset)):
+            if not (dataset_sys[j].get("Terminate_flg", False) == True):
+                non_terminated_indices.append(j)
+        
+        # Only process non-terminated samples
+        processed_dataset = []
+        for j in non_terminated_indices:
+            processed_item = wrap_up_prompt(dataset[j], DB_schema_path, prompt_template, turn_i, dataset_sys[j], dataset_user_1[j])
+            processed_dataset.append(processed_item)
     
     with open(result_path, "w", encoding="utf-8") as f:
-        for item in dataset:
+        for item in processed_dataset:
             if "prompt" in item:
                 json_line = json.dumps(item, ensure_ascii=False)
                 f.write(json_line + "\n")

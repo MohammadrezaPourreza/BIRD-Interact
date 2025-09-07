@@ -11,7 +11,12 @@ def merge_jsonl_by_instance_id(source_path, response_path, output_path):
     with open(response_path, "r", encoding="utf-8") as resp_file:
         for line in resp_file:
             dict_i = json.loads(line)
-            dict_i['prediction_turn_'+str(dict_i["final_turn"])] = dict_i["response"]
+            response = dict_i["response"]
+            dict_i['prediction_turn_'+str(dict_i["final_turn"])] = response
+            
+            # Check if the response indicates termination (contains SQL)
+            if "</t>" in response or "```postgresql" in response.lower() or "```sql" in response.lower():
+                dict_i["Terminate_flg"] = True
             
             del dict_i["response"]
             if "reasoning_content" in dict_i:
