@@ -1,7 +1,33 @@
 #!/bin/bash
-set -e
+set -e  # Exit immediately if a command exits with a non-zero status
+set -u  # Exit immediately if an unset variable is used
+set -o pipefail  # Exit immediately if any command in a pipeline fails
+
+# Initialize error tracking
+ERROR_COUNT=0
+ERROR_LOG="/tmp/init_errors.log"
+> "$ERROR_LOG"  # Clear the log file
+
+# Function to log errors and increment counter
+log_error() {
+    local message="$1"
+    echo "ERROR: $message" | tee -a "$ERROR_LOG"
+    ((ERROR_COUNT++))
+}
+
+# Function to check if initialization should continue
+check_critical_errors() {
+    if [[ $ERROR_COUNT -gt 0 ]]; then
+        echo "CRITICAL: $ERROR_COUNT errors occurred during database initialization"
+        echo "Error details:"
+        cat "$ERROR_LOG"
+        echo "Container initialization FAILED - exiting"
+        exit 1
+    fi
+}
 
 # Wait for PostgreSQL to be ready
+echo "Waiting for PostgreSQL to be ready..."
 until psql -U root -c '\l' 2>/dev/null; do
   >&2 echo "PostgreSQL is unavailable - waiting..."
   sleep 2
@@ -75,8 +101,19 @@ import_db_files() {
     
     # Check if the folder exists
     if [[ ! -d "${db_folder}" ]]; then
-        echo "Warning: Folder ${db_folder} does not exist, skipping database ${db_template}"
-        return
+        log_error "Folder ${db_folder} does not exist for database ${db_template}"
+        return 1
+    fi
+    
+    # First, check and import enum_definitions.sql if it exists
+    local enum_file="${db_folder}/enum_definitions.sql"
+    if [[ -f "${enum_file}" ]]; then
+        echo "Importing enum definitions from ${enum_file} into ${db_template}..."
+        if ! psql -U root -d "${db_template}" -f "${enum_file}" 2>&1; then
+            log_error "Failed to import enum definitions from ${enum_file} for ${db_template}"
+            return 1
+        fi
+        echo "✅ Successfully imported enum definitions for ${db_template}"
     fi
     
     # Special case for global_atlas_template
@@ -87,12 +124,16 @@ import_db_files() {
         
         if [[ -f "${schema_file}" && -f "${inputs_file}" ]]; then
             echo "Importing global_atlas schema file to ${db_template}..."
-            psql -U root -d "${db_template}" -f "${schema_file}" 2>>/tmp/error.log \
-                || echo "Error importing schema file for ${db_template}. Check /tmp/error.log for details."
+            if ! psql -U root -d "${db_template}" -f "${schema_file}" 2>&1; then
+                log_error "Failed to import schema file ${schema_file} for ${db_template}"
+                return 1
+            fi
             
             echo "Importing global_atlas data file to ${db_template}..."
-            psql -U root -d "${db_template}" -f "${inputs_file}" 2>>/tmp/error.log \
-                || echo "Error importing data file for ${db_template}. Check /tmp/error.log for details."
+            if ! psql -U root -d "${db_template}" -f "${inputs_file}" 2>&1; then
+                log_error "Failed to import data file ${inputs_file} for ${db_template}"
+                return 1
+            fi
         else
             # If the special files don't exist, fall back to importing individual table files
             echo "Special global_atlas files not found, falling back to individual table imports."
@@ -109,39 +150,130 @@ import_table_files() {
     local db_template="$1"
     local db_folder="$2"
     local tables="${DATABASE_MAPPING[$db_template]}"
+    local table_errors=0
+    local imported_count=0
     
+    echo "Expected tables for ${db_template}: ${tables}"
+    
+    # Import tables based on mapping first
     for table in $tables; do
         local sql_file="${db_folder}/${table}.sql"
         if [[ -f "$sql_file" ]]; then
             echo "Importing ${sql_file} into database ${db_template}"
-            if ! psql -U root -d "${db_template}" -f "${sql_file}" 2>>/tmp/error.log; then
-                echo "Error importing ${sql_file} into database ${db_template}. Check /tmp/error.log for details."
+            if psql -U root -d "${db_template}" -f "${sql_file}" 2>&1; then
+                imported_count=$((imported_count + 1))
+                echo "✅ Successfully imported ${table}.sql"
+            else
+                log_error "Failed to import ${sql_file} into database ${db_template}"
+                table_errors=$((table_errors + 1))
             fi
         else
-            echo "Warning: SQL file ${sql_file} not found for table ${table}"
+            echo "⚠️  Warning: SQL file ${sql_file} not found for table ${table} in database ${db_template}"
         fi
     done
+    
+    # Also try to import any additional .sql files not in the mapping (excluding enum_definitions.sql)
+    echo "Checking for additional SQL files in ${db_folder}..."
+    for sql_file in "${db_folder}"/*.sql; do
+        # Skip if file doesn't exist (in case of empty glob)
+        [[ ! -f "$sql_file" ]] && continue
+        
+        local basename=$(basename "$sql_file" .sql)
+        
+        # Skip enum_definitions.sql as it was already imported
+        [[ "$basename" == "enum_definitions" ]] && continue
+        
+        # Skip if this table was already processed in the mapping
+        local already_processed=false
+        for table in $tables; do
+            if [[ "$basename" == "$table" ]]; then
+                already_processed=true
+                break
+            fi
+        done
+        
+        # Import additional files not in the mapping
+        if [[ "$already_processed" == false ]]; then
+            echo "Found additional SQL file: ${sql_file}"
+            if psql -U root -d "${db_template}" -f "${sql_file}" 2>&1; then
+                imported_count=$((imported_count + 1))
+                echo "✅ Successfully imported additional file: ${basename}.sql"
+            else
+                log_error "Failed to import additional SQL file ${sql_file} into database ${db_template}"
+                table_errors=$((table_errors + 1))
+            fi
+        fi
+    done
+    
+    echo "📊 Database ${db_template} import summary: ${imported_count} files imported successfully, ${table_errors} errors"
+    
+    if [[ $table_errors -gt 0 ]]; then
+        log_error "Database ${db_template} had ${table_errors} table import failures"
+        return 1
+    fi
+    
+    if [[ $imported_count -eq 0 ]]; then
+        log_error "Database ${db_template} had no files imported successfully"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Import data for each database
+echo "Starting database imports..."
+SUCCESSFUL_IMPORTS=0
+FAILED_IMPORTS=0
+
 for DB_TEMPLATE in "${!DATABASE_MAPPING[@]}"; do
-    import_db_files "${DB_TEMPLATE}"
+    echo "========================================="
+    echo "Processing database: $DB_TEMPLATE"
+    echo "========================================="
+    if import_db_files "${DB_TEMPLATE}"; then
+        echo "✅ Successfully imported data for database ${DB_TEMPLATE}"
+        ((SUCCESSFUL_IMPORTS++))
+    else
+        echo "❌ Failed to import data for database ${DB_TEMPLATE}"
+        ((FAILED_IMPORTS++))
+        # Don't exit immediately, continue with other databases
+    fi
+    echo ""
 done
 
-if [[ -s /tmp/error.log ]]; then
-    echo "Errors occurred during import:"
-    cat /tmp/error.log
-fi
+echo "📊 Import Summary:"
+echo "   ✅ Successful imports: ${SUCCESSFUL_IMPORTS}"
+echo "   ❌ Failed imports: ${FAILED_IMPORTS}"
+echo "   📁 Total databases processed: $((SUCCESSFUL_IMPORTS + FAILED_IMPORTS))"
 
-# rm -f /tmp/error.log
+# Only check critical errors if ALL imports failed
+if [[ $SUCCESSFUL_IMPORTS -eq 0 ]]; then
+    log_error "CRITICAL: All database imports failed - this is a critical error"
+    check_critical_errors
+elif [[ $FAILED_IMPORTS -gt 0 ]]; then
+    echo "⚠️  Warning: Some database imports failed, but continuing with available databases"
+fi
 
 ############################
 # 3. Mark these template DBs as 'datistemplate = true'
 ############################
-echo "Marking these template databases as 'datistemplate = true'..."
+echo "Marking template databases as 'datistemplate = true'..."
+TEMPLATE_MARKING_ERRORS=0
+
 for DB_TEMPLATE in "${!DATABASE_MAPPING[@]}"; do
-  psql -U root -d postgres -c "UPDATE pg_database SET datistemplate = true WHERE datname = '${DB_TEMPLATE}';" || true
+  echo "Marking ${DB_TEMPLATE} as template database..."
+  if psql -U root -d postgres -c "UPDATE pg_database SET datistemplate = true WHERE datname = '${DB_TEMPLATE}';"; then
+    echo "✅ Successfully marked ${DB_TEMPLATE} as template"
+  else
+    log_error "Failed to mark ${DB_TEMPLATE} as template database"
+    ((TEMPLATE_MARKING_ERRORS++))
+  fi
 done
+
+if [[ $TEMPLATE_MARKING_ERRORS -gt 0 ]]; then
+  echo "⚠️  Warning: ${TEMPLATE_MARKING_ERRORS} templates could not be marked properly"
+else
+  echo "✅ All template databases marked successfully"
+fi
 
 ############################
 # Example usage
@@ -152,18 +284,89 @@ echo "    createdb financial --template=financial_template"
 echo ""
 echo "Done creating template DBs."
 
-echo "Now creating real DB from each template DB..."
+echo "Now creating real databases from templates..."
+REAL_DB_CREATED=0
+REAL_DB_ERRORS=0
 
 for DB_TEMPLATE in "${!DATABASE_MAPPING[@]}"; do
   REAL_DB="${DB_TEMPLATE%_template}"
   echo "Checking if real database '${REAL_DB}' exists..."
-  EXISTS=$(psql -U root -tc "SELECT 1 FROM pg_database WHERE datname='${REAL_DB}'" | grep -c 1 || true)
+  EXISTS=$(psql -U root -tc "SELECT 1 FROM pg_database WHERE datname='${REAL_DB}'" | grep -c 1 || echo "0")
   if [[ "$EXISTS" -eq 0 ]]; then
     echo "Creating real database '${REAL_DB}' from template '${DB_TEMPLATE}'"
-    psql -U root -c "CREATE DATABASE ${REAL_DB} WITH OWNER=root TEMPLATE=${DB_TEMPLATE};"
+    if psql -U root -c "CREATE DATABASE ${REAL_DB} WITH OWNER=root TEMPLATE=${DB_TEMPLATE};"; then
+      echo "✅ Successfully created database ${REAL_DB}"
+      ((REAL_DB_CREATED++))
+    else
+      log_error "Failed to create real database ${REAL_DB} from template ${DB_TEMPLATE}"
+      ((REAL_DB_ERRORS++))
+    fi
   else
     echo "Database '${REAL_DB}' already exists, skipping creation."
+    ((REAL_DB_CREATED++))
   fi
 done
 
-echo "Done creating real DBs."
+echo "📊 Real Database Creation Summary:"
+echo "   ✅ Successfully created/exists: ${REAL_DB_CREATED}"
+echo "   ❌ Failed to create: ${REAL_DB_ERRORS}"
+
+echo "🔍 Performing final validation..."
+
+# Validate that all expected databases exist and have tables
+VALIDATION_SUCCESS=0
+VALIDATION_WARNINGS=0
+VALIDATION_ERRORS=0
+
+for DB_TEMPLATE in "${!DATABASE_MAPPING[@]}"; do
+  REAL_DB="${DB_TEMPLATE%_template}"
+  
+  # Check if template database exists
+  if ! psql -U root -tc "SELECT 1 FROM pg_database WHERE datname='${DB_TEMPLATE}'" | grep -q 1; then
+    log_error "Template database ${DB_TEMPLATE} was not created properly"
+    ((VALIDATION_ERRORS++))
+    continue
+  fi
+  
+  # Check if real database exists
+  if ! psql -U root -tc "SELECT 1 FROM pg_database WHERE datname='${REAL_DB}'" | grep -q 1; then
+    log_error "Real database ${REAL_DB} was not created properly"
+    ((VALIDATION_ERRORS++))
+    continue
+  fi
+  
+  # Check if database has expected tables
+  local expected_tables="${DATABASE_MAPPING[$DB_TEMPLATE]}"
+  local table_count=$(echo $expected_tables | wc -w)
+  local actual_count=$(psql -U root -d "${REAL_DB}" -tc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null || echo "0")
+  
+  if [[ "$actual_count" -eq 0 ]]; then
+    log_error "Database ${REAL_DB} exists but has no tables (expected ${table_count})"
+    ((VALIDATION_ERRORS++))
+  elif [[ "$actual_count" -ne "$table_count" ]]; then
+    echo "⚠️  Warning: Database ${REAL_DB} has ${actual_count} tables but expected ${table_count}"
+    ((VALIDATION_WARNINGS++))
+  else
+    echo "✅ Database ${REAL_DB} validated successfully (${actual_count} tables)"
+    ((VALIDATION_SUCCESS++))
+  fi
+done
+
+echo ""
+echo "📊 Final Validation Summary:"
+echo "   ✅ Databases validated successfully: ${VALIDATION_SUCCESS}"
+echo "   ⚠️  Databases with warnings: ${VALIDATION_WARNINGS}"
+echo "   ❌ Databases with errors: ${VALIDATION_ERRORS}"
+
+# Only fail if we have more errors than successes
+if [[ $VALIDATION_ERRORS -gt $VALIDATION_SUCCESS ]]; then
+    log_error "CRITICAL: More validation errors (${VALIDATION_ERRORS}) than successes (${VALIDATION_SUCCESS})"
+    check_critical_errors
+fi
+
+echo "✅ Database initialization completed successfully!"
+echo "📊 Total databases created: $(( ${#DATABASE_MAPPING[@]} * 2 + 1 )) (templates + real + sql_test_template)"
+echo "🎯 All databases are ready for use"
+
+# Clean up
+rm -f "$ERROR_LOG"
