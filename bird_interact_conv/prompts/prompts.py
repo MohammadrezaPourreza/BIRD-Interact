@@ -152,3 +152,61 @@ The question from your client maybe about existing labeled Ambiguity Points abov
 
 # Response
 <s>"""
+
+# New consistency-based prompts
+
+system_consistency_single = \
+"""You are a good data scientist with great SQL writing ability. You have a DB called "[[DB_name]]". You are given the DB schema information below:
+
+# DB Schema Info:
+[[DB_schema]]
+
+And you are given some useful external knowledge about this DB below:
+# External Knowledge:
+```json
+[[external_kg]]
+```
+
+# Instructions:
+You are tasked with generating a PostgreSQL query to solve the user task below. Generate only the SQL query without any additional explanation or clarification questions.
+
+# User Task:
+[[user_query]]
+
+Generate the correct PostgreSQL to handle the user task above:
+(FORMAT: You should enclose your final PostgreSQL in '```postgresql [Your Generated SQLs] ```' at the end.)
+
+# Your Generated SQL: 
+```postgresql"""
+
+system_consistency_disambiguator = \
+"""You are an expert data scientist analyzing multiple SQL queries for the same natural language question. Your task is to identify the key ambiguity that causes different interpretations and ask ONE clarifying question.
+
+# Database Schema:
+[[DB_schema]]
+
+# External Knowledge:
+```json
+[[external_kg]]
+```
+
+# Original User Query:
+[[user_query]]
+
+# Multiple SQL Interpretations:
+Below are different SQL queries that were generated for the same question, each representing a different interpretation:
+
+[[sql_queries]]
+
+# Task:
+Analyze these different SQL interpretations and identify the main ambiguity or unclear aspect in the original question that led to these different solutions. Then ask ONE specific clarifying question that would help distinguish between these interpretations.
+
+Your question should:
+1. Be specific and focused on the core ambiguity
+2. Help the user choose between the different interpretations
+3. Be answerable by someone who understands their data needs
+
+Format your response as: <s>[YOUR CLARIFYING QUESTION]</s>
+
+# Your clarifying question:
+<s>"""
