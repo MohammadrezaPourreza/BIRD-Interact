@@ -93,14 +93,14 @@ uv run python code/collect_response_enhanced.py \
     --result_path ${result_path_selected_llm}
 
 # Continue conversation turns until termination or max turns reached
-for ((turn_num=2; turn_num<=15; turn_num++)); do
+for ((turn_num=2; turn_num<=$((patience + max_sql_executions)); turn_num++)); do
     echo ""
     echo "   Turn $turn_num: Checking for conversation continuation..."
     
     # Check if conversation should continue by looking for termination flags
     last_response=$(tail -n 1 "${result_dir}/system_interaction.jsonl" | jq -r '.response // empty' 2>/dev/null || echo "")
     
-    if [[ "$last_response" == *"</t>"* ]] || [[ "$last_response" == *"```postgresql"* ]]; then
+    if [[ "$last_response" == *"</t>"* ]] || [[ "$last_response" == *"\`\`\`postgresql"* ]]; then
         echo "   ✅ Conversation terminated with final SQL answer"
         break
     fi
@@ -109,6 +109,13 @@ for ((turn_num=2; turn_num<=15; turn_num++)); do
     echo "   Turn $turn_num: User simulator parsing system response..."
     user_1_path="${result_dir}/user_1_interaction.jsonl"
     result_path_prompt="${result_dir}/user_1_interaction_prompt.jsonl"
+    
+    # If this is the first time running user simulator (Turn 2), create initial user_1_interaction.jsonl
+    # by copying the system_interaction.jsonl as the starting point
+    if [ ! -f "$user_1_path" ]; then
+        echo "   Creating initial user interaction file..."
+        cp "${result_dir}/system_interaction.jsonl" "$user_1_path"
+    fi
     
     uv run python code/infer_api_user_1.py \
         --prompt_path ${user_1_path} \
@@ -138,7 +145,13 @@ for ((turn_num=2; turn_num<=15; turn_num++)); do
     sys_resp_path="${result_dir}/system_interaction.jsonl"
     user_1_resp_path="${result_dir}/user_1_interaction.jsonl"
     
-    python ${project_root}/bird_interact_conv_enhanced/code/infer_api_user_2.py \
+    # If this is the first time running user_2 simulator, create initial user_2_interaction.jsonl
+    if [ ! -f "$user_2_path" ]; then
+        echo "   Creating initial user_2 interaction file..."
+        cp "${result_dir}/system_interaction.jsonl" "$user_2_path"
+    fi
+    
+    uv run python code/infer_api_user_2.py \
         --prompt_path ${user_2_path} \
         --result_path ${result_path_prompt} \
         --sys_resp_path ${sys_resp_path} \
@@ -148,13 +161,13 @@ for ((turn_num=2; turn_num<=15; turn_num++)); do
     
     if [ -s "$result_path_prompt" ]; then
         result_path_response="${result_dir}/user_2_interaction_response.jsonl"
-        python ${project_root}/bird_interact_conv_enhanced/code/call_api.py \
+        uv run python code/call_api.py \
             --model_name ${US_model_name} \
             --prompt_path ${result_path_prompt} \
             --output_path ${result_path_response}
         
         result_path_selected_llm="${result_dir}/user_2_interaction.jsonl"
-        python ${project_root}/bird_interact_conv_enhanced/code/collect_response.py \
+        uv run python code/collect_response.py \
             --source_path ${user_2_path} \
             --response_path ${result_path_response} \
             --result_path ${result_path_selected_llm}

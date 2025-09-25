@@ -15,7 +15,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 import argparse  
 import json
 import re
+from decimal import Decimal
+from datetime import date, datetime
 from sql_execution_tool import SQLExecutionTool, parse_sql_tool_call, process_llm_response_with_sql_tool
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles SQL result types like Decimal, date, datetime"""
+    
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        elif hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+        return super().default(obj)
 
 
 class ConversationState:
@@ -184,6 +199,9 @@ def wrap_up_prompt_enhanced(data, DB_schema_path, external_kg_path, prompt_templ
     if "conversation_state" not in data:
         max_turns = len(data["user_query_ambiguity"]["critical_ambiguity"]) + len(data["knowledge_ambiguity"]) + patience
         data["conversation_state"] = ConversationState(instance_id, max_turns, max_sql_executions)
+    elif isinstance(data["conversation_state"], dict):
+        # If conversation_state is a dict (loaded from JSON), convert it back to ConversationState object
+        data["conversation_state"] = ConversationState.from_dict(data["conversation_state"])
     
     conv_state = data["conversation_state"]
     
@@ -367,7 +385,7 @@ def load_from_jsonl_dataset(prompt_path, user_resp_path, result_path, DB_schema_
             if "sql_tool" in result_data:
                 del result_data["sql_tool"]
             
-            file_out.write(json.dumps(result_data, ensure_ascii=False) + '\n')
+            file_out.write(json.dumps(result_data, ensure_ascii=False, cls=EnhancedJSONEncoder) + '\n')
 
 
 def inference():  

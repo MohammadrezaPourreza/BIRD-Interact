@@ -14,9 +14,24 @@ import sys
 import json
 import argparse
 from typing import Dict, Any, List, Optional
+from decimal import Decimal
+from datetime import date, datetime
 
 # Import the SQL execution tool
 from sql_execution_tool import SQLExecutionTool, parse_sql_tool_call, process_llm_response_with_sql_tool
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles SQL result types like Decimal, date, datetime"""
+    
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        elif hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+        return super().default(obj)
 
 
 class EnhancedResponseProcessor:
@@ -100,7 +115,7 @@ def process_responses_batch(source_file: str, output_file: str):
             try:
                 response_data = json.loads(line)
                 processed_data = processor.process_response(response_data)
-                outfile.write(json.dumps(processed_data, ensure_ascii=False) + '\n')
+                outfile.write(json.dumps(processed_data, ensure_ascii=False, cls=EnhancedJSONEncoder) + '\n')
                 
             except json.JSONDecodeError as e:
                 print(f"Warning: Failed to parse JSON on line {line_num}: {e}")
@@ -167,7 +182,7 @@ def collect_enhanced_responses(source_path: str, response_path: str, result_path
                 processed_data = processor.process_response(merged_data)
                 
                 # Write the processed result
-                output_file.write(json.dumps(processed_data, ensure_ascii=False) + '\n')
+                output_file.write(json.dumps(processed_data, ensure_ascii=False, cls=EnhancedJSONEncoder) + '\n')
                 
             except json.JSONDecodeError as e:
                 print(f"Warning: Failed to parse response line {line_num}: {e}")

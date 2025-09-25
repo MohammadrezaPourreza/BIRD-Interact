@@ -5,6 +5,13 @@ import argparse
 import json  
 
 def extract_system_response(original_response):
+    # Handle None or empty responses
+    if original_response is None:
+        return ""
+    
+    if not isinstance(original_response, str):
+        return str(original_response) if original_response is not None else ""
+    
     cut_prep = original_response.find("### Turn ")
     if cut_prep != -1:
         original_response = original_response[:cut_prep]
