@@ -5,6 +5,8 @@ bird_interact_agent/postgre_table_dumps/
 bird_interact_agent/data/
 bird_interact_conv/data/
 bird_interact_conv/results/
+bird_interact_conv_enhanced/data/
+bird_interact_conv_enhanced/results/
 evaluation/postgre_table_dumps/
 gcp_credentials/
 *.zip

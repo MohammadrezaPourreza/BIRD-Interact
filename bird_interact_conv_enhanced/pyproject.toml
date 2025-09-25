@@ -1,0 +1,17 @@
+[project]
+name = "bird-interact-conv-enhanced"
+version = "0.1.0"
+description = "Enhanced BIRD-Interact conversational module with SQL execution tool"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic",
+    "openai",
+    "google-generativeai",
+    "datasets",
+    "sqlglot",
+    "psycopg2-binary",
+    "requests",
+    "tqdm",
+    "pydantic",
+]
