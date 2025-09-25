@@ -87,25 +87,48 @@ git clone https://huggingface.co/datasets/birdsql/bird-interact-lite
 
 ### 2. Environment Setup
 
+#### Quick Setup (Recommended)
 1. Download the database dumps:
    - Get from: [Google Drive](https://drive.google.com/file/d/1KABce6czIqL9kMyIX7i-_A0CIQoDnmyW/view)
    - Move to working directory of `../evaluation` and rename to `postgre_table_dumps`
 
-2. Build and run Docker containers:
+2. Set up the complete environment:
    ```bash
    cd ../evaluation
-   docker compose up --build
+   ./setup-databases.sh
    ```
-   This launches two containers:
-   - PostgreSQL database
-   - Evaluation environment (interact_eval_env)
 
-3. To run the baseline code you need to install the following dependencies:
-  ```bash
-  docker compose exec interact_eval_env bash
-  cd bird_interact_conv
-  pip install -r requirements.txt
-  ```
+   The setup script will automatically:
+   - Build and start Docker containers (PostgreSQL + evaluation environment)
+   - Initialize all template databases
+   - Install required dependencies
+   - Test database functionality
+
+#### Manual Setup (Alternative)
+If you prefer manual setup or need to troubleshoot:
+
+1. Build and run Docker containers:
+   ```bash
+   cd ../evaluation
+   docker compose up --build -d
+   ```
+
+2. Initialize databases (if needed):
+   ```bash
+   ./setup-databases.sh
+   ```
+
+3. Install dependencies in the evaluation container:
+   ```bash
+   docker compose exec interact_eval_env bash
+   cd bird_interact_conv
+   pip install -r requirements.txt
+   ```
+
+#### Troubleshooting
+- **Database errors**: Run `./setup-databases.sh` to fix initialization issues
+- **Fresh start**: Use `./reset-environment.sh` to completely reset the environment
+- **See [DATABASE_SETUP.md](../DATABASE_SETUP.md) for detailed troubleshooting guide**
 
 ### 3. API Configuration
 

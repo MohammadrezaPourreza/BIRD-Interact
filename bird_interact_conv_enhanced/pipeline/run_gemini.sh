@@ -7,9 +7,9 @@ set -e
 
 # Parameters:
 patience=3
-US_model_name="gpt-4.1-nano"
-system_model_name="gpt-4.1-nano"
-project_root="/app"
+US_model_name="gemini-2.0-flash"
+system_model_name="gemini-2.0-flash"
+project_root="/app/"
 # ===========================================: Phase 1 (Ambiguity Resolution) :===========================================
 # Phase 1: Ambiguity Resolution
 ## Turn 1

@@ -13,8 +13,15 @@ RUN apt-get update \
 # Copy the initialization script to the entrypoint directory
 COPY ./env/init-databases_postgresql.sh /docker-entrypoint-initdb.d/
 
+# Copy the initialization script to the entrypoint directory
+COPY ./env/init-databases_postgresql.sh /docker-entrypoint-initdb.d/
+
+# Copy the database check and initialization script
+COPY ./env/check-and-init-db.sh /usr/local/bin/
+
 # Copy the database dumps directory
 COPY ./postgre_table_dumps /docker-entrypoint-initdb.d/postgre_table_dumps
 
-# Set permissions for the initialization script
+# Set permissions for the scripts
 RUN chmod +x /docker-entrypoint-initdb.d/init-databases_postgresql.sh
+RUN chmod +x /usr/local/bin/check-and-init-db.sh
