@@ -10,8 +10,8 @@ import threading
 
 from openai import OpenAI
 import anthropic
-from google import genai
-from google.genai.types import HarmCategory, HarmBlockThreshold, GenerateContentConfig, ThinkingConfig
+import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 from config import model_config
 
 
@@ -115,14 +115,12 @@ def api_request(messages, engine, client, backend, **kwargs):
                 response = client.models.generate_content(
                     model=engine,
                     contents=messages[0]["content"],
-                    config=GenerateContentConfig(
+                    config=GenerationConfig(
                         temperature=kwargs.get("temperature", 0),
                         top_p=kwargs.get("top_p", 1),
                         max_output_tokens=kwargs.get("max_tokens", 64000),
-                        presence_penalty=kwargs.get("presence_penalty", 0),
-                        frequency_penalty=kwargs.get("frequency_penalty", 0),
+                        # Note: presence_penalty and frequency_penalty might not be available in GenerationConfig
                         stop_sequences=kwargs.get("stop", None),
-                        # thinking_config=ThinkingConfig(thinking_budget=0) # Disables thinking
                     ),
                 )
                 try:

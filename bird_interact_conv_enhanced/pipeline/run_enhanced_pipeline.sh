@@ -12,9 +12,9 @@ set -e
 # Basic parameters
 patience=3                      # Clarification question budget
 max_sql_executions=5           # SQL execution budget (separate from clarification budget)
-US_model_name="gpt-4o-mini"   # User simulator model
-system_model_name="gpt-4o"    # System model (LLM being evaluated)
-project_root="/home/dev/lab/BIRD-Interact"            # Update this to your project root
+US_model_name="gpt-4.1-nano"   # User simulator model
+system_model_name="gpt-4.1-nano"    # System model (LLM being evaluated)
+project_root="/app"            # Update this to your project root
 
 # Paths
 enhanced_dir="${project_root}/bird_interact_conv_enhanced"

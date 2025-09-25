@@ -69,6 +69,30 @@ class ConversationState:
         turns_left = max(0, self.max_turns - self.current_turn + 1)
         sql_left = max(0, self.max_sql_executions - self.sql_executions_used)
         return f"{turns_left} clarification turns left, {sql_left} SQL executions left"
+    
+    def to_dict(self) -> dict:
+        """Convert ConversationState to JSON-serializable dictionary."""
+        return {
+            "instance_id": self.instance_id,
+            "max_turns": self.max_turns,
+            "max_sql_executions": self.max_sql_executions,
+            "current_turn": self.current_turn,
+            "sql_executions_used": self.sql_executions_used,
+            "conversation_history": self.conversation_history,
+            "sql_execution_history": self.sql_execution_history,
+            "terminated": self.terminated
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create ConversationState from dictionary."""
+        state = cls(data["instance_id"], data["max_turns"], data["max_sql_executions"])
+        state.current_turn = data["current_turn"]
+        state.sql_executions_used = data["sql_executions_used"]
+        state.conversation_history = data["conversation_history"]
+        state.sql_execution_history = data["sql_execution_history"]
+        state.terminated = data["terminated"]
+        return state
 
 
 def process_batch_data(data, batch_size):
@@ -332,6 +356,17 @@ def load_from_jsonl_dataset(prompt_path, user_resp_path, result_path, DB_schema_
     # Write results
     with open(result_path, 'w', encoding='utf-8') as file_out:
         for result_data in results:
+            # Make a copy to avoid modifying original data
+            result_data = result_data.copy()
+            
+            # Convert ConversationState to dict if present
+            if "conversation_state" in result_data and hasattr(result_data["conversation_state"], 'to_dict'):
+                result_data["conversation_state"] = result_data["conversation_state"].to_dict()
+            
+            # Remove SQLExecutionTool object (not JSON serializable)
+            if "sql_tool" in result_data:
+                del result_data["sql_tool"]
+            
             file_out.write(json.dumps(result_data, ensure_ascii=False) + '\n')
 
 
