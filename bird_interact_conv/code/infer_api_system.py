@@ -130,26 +130,44 @@ def wrap_up_prompt(data, DB_schema_path, external_kg_path, prompt_template, pati
             
     elif phase=="debug" and data_user!={} and data_user["status"]=="failed":
         data_sql_report = data_user
-        prompt = data.get('prompt_turn_'+str(data['final_turn']), '')
-        data['final_turn'] = data['final_turn'] + 1
+        # Get final_turn with fallback to 1 if not present (for batch disambiguation)
+        current_final_turn = data.get('final_turn', 1)
+        prompt = data.get('prompt_turn_'+str(current_final_turn), '')
+        data['final_turn'] = current_final_turn + 1
         
         if "[exec_err_flg]" in data_sql_report["error_msg"]:
             error_msg = "Your SQL is not executable and raises the following error: " + data_sql_report["error_msg"]
         else:
             error_msg = "Are you sure about your SQL? You have one more chance to update your SQL now."
+        
+        # Get the predicted SQL, handle case where it's missing or empty
+        pred_sqls = data_sql_report.get('pred_sqls', [])
+        if pred_sqls and len(pred_sqls) > 0:
+            pred_sql = pred_sqls[0]
+        else:
+            pred_sql = "-- No SQL was generated in the previous turn"
             
-        prompt = prompt.replace("- You: <t>", "- You: \n```postgresql \n") + data_sql_report.get('pred_sqls', '')[0] + '\n``` \n\n### Turn [[turn_i]]: \n# Your sql in previous turn may have problem. You MUST provide the updated PostgreSQL and follow the format: "<t>```postgresql [YOUR-SQL] ```</t>"\n-User: '.replace('[[turn_i]]', str(data['final_turn'])) + error_msg.strip() + '\n- You: <t>'
+        prompt = prompt.replace("- You: <t>", "- You: \n```postgresql \n") + pred_sql + '\n``` \n\n### Turn [[turn_i]]: \n# Your sql in previous turn may have problem. You MUST provide the updated PostgreSQL and follow the format: "<t>```postgresql [YOUR-SQL] ```</t>"\n-User: '.replace('[[turn_i]]', str(data['final_turn'])) + error_msg.strip() + '\n- You: <t>'
         
         data['prompt_turn_'+str(data['final_turn'])] = prompt
         data["prompt"] = prompt
     
     elif phase=="follow" and data_user!={} and data_user["status"]=="success":
         data_sql_report = data_user
-        prompt = data.get('prompt_turn_'+str(data['final_turn']), '')
-        data['final_turn'] = data['final_turn'] + 1
+        # Get final_turn with fallback to 1 if not present (for batch disambiguation)
+        current_final_turn = data.get('final_turn', 1)
+        prompt = data.get('prompt_turn_'+str(current_final_turn), '')
+        data['final_turn'] = current_final_turn + 1
         follow_up_Q = data['follow_up']['query']
         
-        prompt = prompt.replace("- You: <t>", "- You: \n```postgresql \n") + data_sql_report.get('pred_sqls', '')[0] + '\n``` \n\n### Turn [[turn_i]]: \n# Here is a follow up question. You MUST provide the PostgreSQ to solve this question and follow the format: "<t>```postgresql [YOUR-SQL] ```</t>"\n-User: ```text \n'.replace('[[turn_i]]', str(data['final_turn'])) + follow_up_Q + '\n```\n\n- You: <t>'
+        # Get the predicted SQL, handle case where it's missing or empty
+        pred_sqls = data_sql_report.get('pred_sqls', [])
+        if pred_sqls and len(pred_sqls) > 0:
+            pred_sql = pred_sqls[0]
+        else:
+            pred_sql = "-- No SQL was generated in the previous turn"
+        
+        prompt = prompt.replace("- You: <t>", "- You: \n```postgresql \n") + pred_sql + '\n``` \n\n### Turn [[turn_i]]: \n# Here is a follow up question. You MUST provide the PostgreSQ to solve this question and follow the format: "<t>```postgresql [YOUR-SQL] ```</t>"\n-User: ```text \n'.replace('[[turn_i]]', str(data['final_turn'])) + follow_up_Q + '\n```\n\n- You: <t>'
         data['prompt_turn_'+str(data['final_turn'])] = prompt
         data["prompt"] = prompt
         

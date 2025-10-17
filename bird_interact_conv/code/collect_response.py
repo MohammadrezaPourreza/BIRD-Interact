@@ -11,7 +11,9 @@ def merge_jsonl_by_instance_id(source_path, response_path, output_path):
     with open(response_path, "r", encoding="utf-8") as resp_file:
         for line in resp_file:
             dict_i = json.loads(line)
-            dict_i['prediction_turn_'+str(dict_i["final_turn"])] = dict_i["response"]
+            # Handle case where final_turn might not exist (batch disambiguation)
+            final_turn = dict_i.get("final_turn", 1)
+            dict_i['prediction_turn_'+str(final_turn)] = dict_i["response"]
             
             del dict_i["response"]
             if "reasoning_content" in dict_i:
@@ -30,7 +32,10 @@ def merge_jsonl_by_instance_id(source_path, response_path, output_path):
         for item in src_file:
             instance_id = item.get("instance_id")
             if instance_id in id_to_response:
-                item = id_to_response[instance_id]
+                # Update item with response data instead of replacing
+                response_data = id_to_response[instance_id]
+                for key, value in response_data.items():
+                    item[key] = value
                 item["error_flg"] = False
             else:
                 if "error_flg" in item and item["error_flg"] == False:

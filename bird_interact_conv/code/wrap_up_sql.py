@@ -5,6 +5,9 @@ import argparse
 import json  
 
 def extract_system_response(original_response):
+    if original_response is None:
+        return "ERROR: No response found"
+    
     cut_prep = original_response.find("### Turn ")
     if cut_prep != -1:
         original_response = original_response[:cut_prep]
@@ -38,10 +41,19 @@ def get_max_turn_prediction(d):
         
 def wrap_up_prompt(data):         
     response_sql = get_max_turn_prediction(data)
+    
+    # Debug: print instance_id if no prediction found
+    if response_sql is None:
+        instance_id = data.get("instance_id", "unknown")
+        print(f"Warning: No prediction found for instance {instance_id}")
+        print(f"Available keys: {list(data.keys())}")
+        return data  # Skip this instance
+    
     sql_extracted = extract_system_response(response_sql)
     test_cases = data.get('test_cases', '')
     if not test_cases:
-        if not data["conditions"]["distinct"]:
+        conditions = data.get("conditions", {})
+        if conditions and not conditions.get("distinct", True):
             test_cases = ["\ndef test_case(pred_sqls, sol_sqls, db_name, conn):\n    pred_sqls = remove_distinct(pred_sqls)\n    sol_sqls = remove_distinct(sol_sqls)\n    result = ex_base(pred_sqls, sol_sqls, db_name, conn)\n    assert result == 1, f\"ex_base returned {result} but expected 1.\"\n    return result"]
         else:
             test_cases = ["\ndef test_case(pred_sqls, sol_sqls, db_name, conn):\n    result = ex_base(pred_sqls, sol_sqls, db_name, conn)\n    assert result == 1, f\"ex_base returned {result} but expected 1.\"\n    return result"]

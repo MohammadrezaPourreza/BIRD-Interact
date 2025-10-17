@@ -26,6 +26,28 @@ NOTE: If you think you have asked enough questions or used up all turns, you MUS
 # Format: "<s>[YOUR-ONLY-ONE-QUESTION]</s>" if you choose to ask for clarification; or "<t>```postgresql [FILL-YOUR-SQL] ```</t>" if you choose to generate final SQL.
 - You: """
 
+system_disambiguate_prompt = """
+You are a meticulous data scientist specializing in identifying query ambiguities. You have access to a database schema providded below.
+
+You are given the database schema and relevant external knowledge below.
+
+DB Schema Info:
+[[DB_schema]]
+
+External knowledge:
+[[external_kg]]
+
+Instructions:
+Your sole task is to act as an expert clarification agent for a Text-to-SQL system. You must comprehensively analyze the user's task below, considering the database schema and external knowledge, to find all potential ambiguities, missing details, or areas where the user's intent is unclear.
+
+Based on your analysis, you will generate a consolidated, numbered list of all questions needed to fully clarify the user's request. Your goal is to gather all required information in a single, comprehensive interaction.
+
+User Task:
+[[user_query]]
+
+Format: You MUST provide your response as a numbered list enclosed between [CLARIFICATION] and [/CLARIFICATION].
+If the question is clear just output [CLARIFICATION] CLEAR [/CLARIFICATION]."""
+
 system_single = \
 """# Database Schema:
 [[DB_schema]]

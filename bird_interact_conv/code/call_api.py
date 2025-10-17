@@ -10,8 +10,9 @@ import threading
 
 from openai import OpenAI
 import anthropic
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold, GenerationConfig
+from google import genai
+from google.oauth2 import service_account
+from google.genai import types
 from config import model_config
 
 
@@ -28,9 +29,9 @@ def new_directory(path):
         os.makedirs(path)
 
 
-GEMINI_API_KEYS = model_config["gemini"]
+# GEMINI_API_KEYS = model_config["gemini"]
 # Create an infinite key cycle
-gemini_key_cycle = itertools.cycle(GEMINI_API_KEYS)
+# gemini_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 
 
 def write_response(results, data_list, output_path):
@@ -49,7 +50,6 @@ def write_response(results, data_list, output_path):
         with open(output_path, "w") as f:
             for instance in formatted_data:
                 f.write(json.dumps(instance, ensure_ascii=False) + "\n")
-
 
 def api_request(messages, engine, client, backend, **kwargs):
     """
@@ -82,31 +82,35 @@ def api_request(messages, engine, client, backend, **kwargs):
                 return message.content[0].text
 
             elif backend == "genai":
-                response = client.generate_content(
-                    messages[0]["content"],
-                    generation_config=GenerationConfig(
-                        temperature=kwargs.get("temperature", 0),
-                        top_p=kwargs.get("top_p", 1),
-                        max_output_tokens=kwargs.get("max_tokens", 512),
-                        presence_penalty=kwargs.get("presence_penalty", 0),
-                        frequency_penalty=kwargs.get("frequency_penalty", 0),
-                        stop_sequences=kwargs.get("stop", None),
+                response = client.models.generate_content(
+                    model=engine,
+                    contents=messages[0]["content"],
+                    config=types.GenerateContentConfig(
+                        temperature=kwargs.get("temperature", 0.1),
+                        # thinking_config=types.ThinkingConfig(thinking_budget=0) # Disables thinking
                     ),
                 )
                 try:
                     return response.text
                 except ValueError as ve:
-                    return f"Model refused to generate a response {ve}"
-                except Exception:
-                    return ""
+                    error_msg = f"Model refused to generate a response: {ve}"
+                    print(f"[ERROR] {error_msg}")
+                    return f"ERROR: {error_msg}"
+                except Exception as e:
+                    error_msg = f"Exception getting response text: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    return f"ERROR: {error_msg}"
 
         except Exception as e:
-            print(e)
-            time.sleep(1)
+            print(f"[ERROR] API request failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # time.sleep(1)
             # Rotate API keys and retry if using the genai backend
-            if backend == "genai":
-                genai.configure(api_key=next(gemini_key_cycle))
-                time.sleep(10)
+            # if backend == "genai":
+            #     genai.configure(api_key=next(gemini_key_cycle))
+            #     time.sleep(10)
+            raise  # Re-raise the exception so retry decorator can handle it
 
 
 def call_api_model(
@@ -138,10 +142,12 @@ def call_api_model(
         )
         backend = "anthropic"
 
-    elif "gemini" in model_name:
+    elif "gemini" in model_name or "projects/" in model_name:
         engine = model_name
-        client = genai.GenerativeModel(engine)
-        genai.configure(api_key=GEMINI_API_KEYS[1])
+        project = model_config[model_name]["project"]
+        location = model_config[model_name]["location"]
+        credentials = service_account.Credentials.from_service_account_file(model_config[model_name]["credential_path"], scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        client = genai.Client(vertexai=True, project=project, location=location, credentials=credentials)
         backend = "genai"
 
     else:

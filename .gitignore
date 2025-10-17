@@ -3,3 +3,6 @@ __pycache__/
 bird_interact_agent/outputs/
 bird_interact_agent/postgre_table_dumps/
 bird_interact_agent/data/
+evaluation/postgre_table_dumps/
+/bird_interact_conv/results
+bird_interact_conv/gcp_credentials/credentials.json
